@@ -1,0 +1,5 @@
+/build/
+/build-*/
+/scratch/
+__pycache__/
+.ruff_cache/
