@@ -94,16 +94,20 @@ endif()
 target_link_libraries(touch_ui PRIVATE SDL3_image::SDL3_image)
 target_compile_options(touch_ui PRIVATE -Wall -Wextra -Wpedantic)
 
-# A capture binary keeps the drawn result visible on a host that cannot run the
-# port itself; tools/capture.py drives it.
-add_executable(touch_ui_capture tests/capture_touch_ui.cpp)
-target_link_libraries(touch_ui_capture PRIVATE touch_ui)
-target_include_directories(touch_ui_capture PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/include" "${TOUCH_UI_GENERATED_DIR}")
+# The module's own tests and capture tool run where they can be executed: a
+# cross-compiled consumer build (Android) links the library only.
+if(PROJECT_IS_TOP_LEVEL AND NOT CMAKE_CROSSCOMPILING)
+    # A capture binary keeps the drawn result visible on a host that cannot run
+    # the port itself; tools/capture.py drives it.
+    add_executable(touch_ui_capture tests/capture_touch_ui.cpp)
+    target_link_libraries(touch_ui_capture PRIVATE touch_ui)
+    target_include_directories(touch_ui_capture PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include" "${TOUCH_UI_GENERATED_DIR}")
 
-enable_testing()
-add_executable(touch_ui_tests tests/test_touch_ui.cpp)
-target_link_libraries(touch_ui_tests PRIVATE touch_ui)
-target_include_directories(touch_ui_tests PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/include" "${TOUCH_UI_GENERATED_DIR}")
-add_test(NAME touch_ui_tests COMMAND touch_ui_tests)
+    enable_testing()
+    add_executable(touch_ui_tests tests/test_touch_ui.cpp)
+    target_link_libraries(touch_ui_tests PRIVATE touch_ui)
+    target_include_directories(touch_ui_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include" "${TOUCH_UI_GENERATED_DIR}")
+    add_test(NAME touch_ui_tests COMMAND touch_ui_tests)
+endif()
