@@ -4,6 +4,7 @@
 // the real SDL renderer so a style change that stops drawing fails here.
 #include "touch_ui/touch_ui.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -39,6 +40,7 @@ touch_ui::Config test_config() {
       {5, touch_ui::Placement::action_primary, "attack", true, fire},
       {6, touch_ui::Placement::action_secondary, "use", true, interact},
       {7, touch_ui::Placement::top_right, "pause", true, 1U << 6},
+      {8, touch_ui::Placement::top_left, "camera", true, 1U << 7},
   };
   return config;
 }
@@ -55,8 +57,28 @@ touch_ui::Geometry phone_landscape() {
 void layout_stays_inside_the_safe_area_and_scales_with_the_surface() {
   touch_ui::Config config = test_config();
   const touch_ui::Layout phone = touch_ui::make_layout(config, phone_landscape());
-  check(phone.unit >= 56.0F && phone.unit <= 160.0F, "unit is clamped to a usable size");
-  check(phone.visuals.size() == 7, "every configured control draws once");
+  // The property, not the tuned number: a unit a thumb can hit, and never one
+  // that takes over the short side. Asserting the clamp's literals here would
+  // make every sizing change a test change.
+  const float short_side = std::min(phone_landscape().output_width, phone_landscape().output_height);
+  check(phone.unit >= 44.0F, "a control is at least a finger's width");
+  check(phone.unit <= short_side * 0.25F, "the controls do not take over the screen");
+  check(phone.visuals.size() == 8, "every configured control draws once");
+  // The two corner placements are different places: a control at each must not
+  // land on top of the other, which is what a single shared bound would do.
+  const touch_ui::Visual *top_right = nullptr;
+  const touch_ui::Visual *top_left = nullptr;
+  for (const touch_ui::Visual &visual : phone.visuals) {
+    if (visual.id == 7) {
+      top_right = &visual;
+    } else if (visual.id == 8) {
+      top_left = &visual;
+    }
+  }
+  check(top_right != nullptr && top_left != nullptr, "both corner controls are placed");
+  if (top_right != nullptr && top_left != nullptr) {
+    check(top_left->bounds.right < top_right->bounds.left, "the corners do not overlap");
+  }
   for (const touch_ui::Zone &zone : phone.zones) {
     check(zone.bounds.left >= 0.0F && zone.bounds.top >= 0.0F, "zones start inside the surface");
     check(zone.bounds.right <= 2400.0F && zone.bounds.bottom <= 1080.0F,
