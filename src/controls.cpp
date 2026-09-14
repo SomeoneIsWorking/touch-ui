@@ -30,8 +30,12 @@
 namespace touch_ui {
 namespace {
 
-constexpr float kIconFraction = 0.62F;
+constexpr float kIconFraction = 0.72F;
+//: A held control grows a little and lights up, so the finger's own shadow does
+//: not decide whether the press registered.
+constexpr float kHeldIconFraction = 0.78F;
 constexpr float kDiscRadiusFraction = 0.46F;
+constexpr float kHeldDiscRadiusFraction = 0.49F;
 constexpr float kRingWidthFraction = 0.06F;
 constexpr int kCircleSegments = 40;
 
@@ -435,14 +439,22 @@ void Controls::present(SDL_Renderer *renderer) {
     const SDL_FRect bounds{visual.bounds.left, visual.bounds.top, visual.bounds.width(),
                            visual.bounds.height()};
     const SDL_FPoint centre{bounds.x + bounds.w * 0.5F, bounds.y + bounds.h * 0.5F};
+    const float radius =
+        std::min(bounds.w, bounds.h) * (held ? kHeldDiscRadiusFraction : kDiscRadiusFraction);
     if (visual.disc) {
-      const float radius = std::min(bounds.w, bounds.h) * kDiscRadiusFraction;
+      /* Held: the accent fill the rest of the port's UI uses, at ring brightness.
+       * Idle: a translucent slate so the game stays readable through it. */
       fill_circle(renderer, centre, radius,
-                  SDL_Color{20, 27, 38, scale_alpha(held ? 0.80F : 0.60F)});
-      stroke_circle(renderer, centre, radius, std::max(1.5F, radius * kRingWidthFraction),
-                    SDL_Color{242, 247, 250, scale_alpha(held ? 1.0F : 0.70F)});
+                  held ? SDL_Color{53, 81, 106, 240} : SDL_Color{20, 27, 38, 153});
     }
-    const int pixels = std::max(8, static_cast<int>(bounds.w * kIconFraction));
+    /* The ring is drawn for every control, including the ones whose art carries
+     * its own button: a direction glyph's circle sits just inside it, so a held
+     * direction lights a gold halo instead of only brightening its arrow. */
+    stroke_circle(renderer, centre, radius,
+                  std::max(1.5F, radius * (held ? kRingWidthFraction * 1.5F : kRingWidthFraction)),
+                  held ? SDL_Color{255, 214, 90, 255} : SDL_Color{242, 247, 250, 178});
+    const int pixels =
+        std::max(8, static_cast<int>(bounds.w * (held ? kHeldIconFraction : kIconFraction)));
     SDL_Texture *texture = impl_->glyph_texture(renderer, visual.icon, pixels);
     if (texture == nullptr) {
       continue;
@@ -450,7 +462,7 @@ void Controls::present(SDL_Renderer *renderer) {
     const float side = static_cast<float>(pixels);
     const SDL_FRect destination{bounds.x + (bounds.w - side) * 0.5F,
                                 bounds.y + (bounds.h - side) * 0.5F, side, side};
-    SDL_SetTextureAlphaMod(texture, held ? 255 : 230);
+    SDL_SetTextureAlphaMod(texture, held ? 255 : 235);
     SDL_RenderTexture(renderer, texture, nullptr, &destination);
   }
   SDL_SetRenderDrawBlendMode(renderer, previous_blend);

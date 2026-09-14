@@ -15,9 +15,9 @@
 namespace touch_ui {
 namespace {
 
-constexpr float kUnitFraction = 0.155F;
-constexpr float kMinUnit = 56.0F;
-constexpr float kMaxUnit = 160.0F;
+constexpr float kUnitFraction = 0.17F;
+constexpr float kMinUnit = 60.0F;
+constexpr float kMaxUnit = 170.0F;
 constexpr float kPauseScale = 0.9F;
 //: Corner cells have no control of their own; their zone ids start here.
 constexpr std::uint32_t kCornerIdBase = 0x1000U;
@@ -159,8 +159,11 @@ Layout make_layout(const Config &config, const Geometry &geometry) {
           Visual{control.id, bounds, control.icon, control.disc, control.actions});
       continue;
     }
-    if (control.placement == Placement::top_right) {
-      bounds = rect_at(safe.right - edge - unit * kPauseScale, safe.top + edge, unit * kPauseScale);
+    if (control.placement == Placement::top_right || control.placement == Placement::top_left) {
+      const float left = control.placement == Placement::top_right
+                             ? safe.right - edge - unit * kPauseScale
+                             : safe.left + edge;
+      bounds = rect_at(left, safe.top + edge, unit * kPauseScale);
     } else {
       const ActionSlot slot = action_slot(control.placement);
       bounds = rect_at(buttons_left + slot.column * unit, buttons_top + slot.row * unit, unit);

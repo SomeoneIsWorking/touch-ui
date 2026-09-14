@@ -52,7 +52,8 @@ struct Point {
 
 // Where a control sits inside the safe area. Direction placements follow the
 // convention every d-pad uses; the action placements are the three buttons a
-// thumb rests on, and top_right is the reachable corner for pause.
+// thumb rests on, and the two top corners are the reachable places for a
+// control a thumb would otherwise cover (pause, and a view toggle).
 enum class Placement : std::uint8_t {
   dpad_up,
   dpad_up_right,
@@ -66,6 +67,7 @@ enum class Placement : std::uint8_t {
   action_secondary,
   action_tertiary,
   top_right,
+  top_left,
 };
 
 // One control the title asks for.
