@@ -71,3 +71,5 @@ drawing fails.
 `python3 tools/capture.py scratch/controls.png --width 2400 --height 1080`
 writes the drawn result on a phone-shaped surface for eyeballing on a host that
 cannot run the phone.
+
+Built with AI assistance (Claude and other LLMs).
