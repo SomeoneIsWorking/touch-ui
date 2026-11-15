@@ -15,6 +15,9 @@
 //   ...
 //   controls.present(renderer);                     // over the presented frame
 //
+// A port that draws without an SDL_Renderer (SDL_GPU, its own UI renderer)
+// implements Painter and calls present(painter) instead.
+//
 // Art comes from the shared port-assets touch-controls set: the SVG bytes are
 // embedded at build time and rasterised at the size actually drawn, so the
 // buttons stay sharp on any display instead of being upscaled from the game's
@@ -24,6 +27,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -68,6 +72,17 @@ enum class Placement : std::uint8_t {
   action_tertiary,
   top_right,
   top_left,
+  // The fourth face button, above the other three: a controller's diamond.
+  action_quaternary,
+  // Shoulder buttons down the top corners: the first under the second.
+  shoulder_left,
+  shoulder_left_2,
+  shoulder_right,
+  shoulder_right_2,
+  // Select and Start, side by side at the bottom centre.
+  menu_left,
+  menu_right,
+  top_centre,
 };
 
 // One control the title asks for.
@@ -131,6 +146,35 @@ struct Layout {
 using ActionSink = std::function<void(std::uint32_t action, bool down)>;
 using PointerSink = std::function<void(Point position, int state)>;
 
+// One corner of a drawn triangle, in output pixels. Colours are straight
+// (not premultiplied) alpha; `uv` addresses the image the triangles sample.
+struct Vertex {
+  Point position{};
+  float red = 1.0F;
+  float green = 1.0F;
+  float blue = 1.0F;
+  float alpha = 1.0F;
+  Point uv{};
+};
+
+// The surface the controls draw on. Images are uploaded once per glyph and
+// size; a handle is the painter's own and never 0. Handles stay valid until
+// release() or until the painter itself goes away.
+class Painter {
+public:
+  Painter() = default;
+  Painter(const Painter &) = delete;
+  Painter &operator=(const Painter &) = delete;
+  virtual ~Painter() = default;
+
+  // A square RGBA32 image, `side` pixels each way, straight alpha.
+  virtual std::uintptr_t upload(std::span<const std::uint8_t> rgba, int side) = 0;
+  virtual void release(std::uintptr_t image) = 0;
+  // Triangles blended over the frame; image 0 draws them untextured.
+  virtual void draw(std::uintptr_t image, std::span<const Vertex> vertices,
+                    std::span<const int> indices) = 0;
+};
+
 class Controls {
 public:
   Controls(Config config, ActionSink actions);
@@ -164,7 +208,9 @@ public:
   // Release every held action and drop any claimed pointer (focus loss, pause).
   void cancel();
 
-  // Draw over the presented frame at the output resolution.
+  // Draw over the presented frame at the output resolution. One Controls
+  // draws through one painter; a glyph made for another painter is replaced.
+  void present(Painter &painter);
   void present(SDL_Renderer *renderer);
 
 private:

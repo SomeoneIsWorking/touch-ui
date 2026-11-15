@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -60,7 +61,8 @@ void layout_stays_inside_the_safe_area_and_scales_with_the_surface() {
   // The property, not the tuned number: a unit a thumb can hit, and never one
   // that takes over the short side. Asserting the clamp's literals here would
   // make every sizing change a test change.
-  const float short_side = std::min(phone_landscape().output_width, phone_landscape().output_height);
+  const float short_side =
+      std::min(phone_landscape().output_width, phone_landscape().output_height);
   check(phone.unit >= 44.0F, "a control is at least a finger's width");
   check(phone.unit <= short_side * 0.25F, "the controls do not take over the screen");
   check(phone.visuals.size() == 8, "every configured control draws once");
@@ -309,6 +311,53 @@ void the_controls_are_drawn_into_the_frame() {
 
 } // namespace
 
+// A full controller: d-pad, four face buttons, four shoulders, Select, Start
+// and a menu button. Every control keeps its own region on landscape phones.
+void a_full_controller_layout_does_not_overlap() {
+  touch_ui::Config config;
+  using touch_ui::Placement;
+  const std::vector<std::pair<Placement, const char *>> placed = {
+      {Placement::dpad_up, "direction_up"},
+      {Placement::dpad_down, "direction_down"},
+      {Placement::dpad_left, "direction_left"},
+      {Placement::dpad_right, "direction_right"},
+      {Placement::action_primary, "face_circle"},
+      {Placement::action_secondary, "face_cross"},
+      {Placement::action_tertiary, "face_square"},
+      {Placement::action_quaternary, "face_triangle"},
+      {Placement::shoulder_left, "shoulder_l1"},
+      {Placement::shoulder_left_2, "shoulder_l2"},
+      {Placement::shoulder_right, "shoulder_r1"},
+      {Placement::shoulder_right_2, "shoulder_r2"},
+      {Placement::menu_left, "select"},
+      {Placement::menu_right, "start"},
+      {Placement::top_centre, "pause"}};
+  std::uint32_t id = 1;
+  for (const auto &[placement, icon] : placed) {
+    config.controls.push_back({id, placement, icon, true, 1U << (id - 1U)});
+    ++id;
+  }
+  for (const auto &[width, height] :
+       {std::pair{2400, 1080}, std::pair{1920, 1080}, std::pair{1280, 720}}) {
+    const auto w = static_cast<float>(width);
+    const auto h = static_cast<float>(height);
+    const touch_ui::Layout layout =
+        touch_ui::make_layout(config, {width, height, 1.0F, touch_ui::Rect{0.0F, 0.0F, w, h}});
+    check(layout.visuals.size() == placed.size(), "every controller control draws once");
+    for (std::size_t a = 0; a < layout.visuals.size(); ++a) {
+      const touch_ui::Rect &first = layout.visuals[a].bounds;
+      check(first.left >= 0.0F && first.top >= 0.0F && first.right <= w && first.bottom <= h,
+            "a controller control stays on the surface");
+      for (std::size_t b = a + 1; b < layout.visuals.size(); ++b) {
+        const touch_ui::Rect &second = layout.visuals[b].bounds;
+        const bool apart = first.right <= second.left || second.right <= first.left ||
+                           first.bottom <= second.top || second.bottom <= first.top;
+        check(apart, "two controller controls do not overlap");
+      }
+    }
+  }
+}
+
 int main() {
   if (!SDL_Init(SDL_INIT_VIDEO)) {
     std::fprintf(stderr, "SDL could not start: %s\n", SDL_GetError());
@@ -318,6 +367,7 @@ int main() {
   a_diagonal_cell_asserts_both_directions();
   actions_are_reference_counted_across_two_fingers();
   a_touch_outside_the_controls_is_not_a_game_click();
+  a_full_controller_layout_does_not_overlap();
   the_controls_are_drawn_into_the_frame();
   SDL_Quit();
 

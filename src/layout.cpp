@@ -19,6 +19,10 @@ constexpr float kUnitFraction = 0.17F;
 constexpr float kMinUnit = 60.0F;
 constexpr float kMaxUnit = 170.0F;
 constexpr float kPauseScale = 0.9F;
+//: The first shoulder sits this many units below the second.
+constexpr float kShoulderStep = 1.05F;
+//: Units between Select and Start.
+constexpr float kMenuGap = 0.4F;
 //: Corner cells have no control of their own; their zone ids start here.
 constexpr std::uint32_t kCornerIdBase = 0x1000U;
 
@@ -66,17 +70,24 @@ struct ActionSlot {
   float row;
 };
 
-// The three action buttons sit on a shallow diamond a thumb sweeps across:
-// primary at the outer right, secondary below-left of it, tertiary above it.
+// The action buttons sit on a diamond a thumb sweeps across: primary at the
+// outer right, secondary below, tertiary at the inner left, quaternary above.
 ActionSlot action_slot(Placement placement) {
   switch (placement) {
   case Placement::action_primary:
     return {2.1F, 0.72F};
   case Placement::action_secondary:
     return {1.05F, 1.62F};
+  case Placement::action_quaternary:
+    return {1.05F, -0.18F};
   default:
     return {0.0F, 0.72F};
   }
+}
+
+bool is_action(Placement placement) {
+  return placement == Placement::action_primary || placement == Placement::action_secondary ||
+         placement == Placement::action_tertiary || placement == Placement::action_quaternary;
 }
 
 } // namespace
@@ -159,14 +170,38 @@ Layout make_layout(const Config &config, const Geometry &geometry) {
           Visual{control.id, bounds, control.icon, control.disc, control.actions});
       continue;
     }
-    if (control.placement == Placement::top_right || control.placement == Placement::top_left) {
-      const float left = control.placement == Placement::top_right
-                             ? safe.right - edge - unit * kPauseScale
-                             : safe.left + edge;
-      bounds = rect_at(left, safe.top + edge, unit * kPauseScale);
-    } else {
-      const ActionSlot slot = action_slot(control.placement);
+    const float small = unit * kPauseScale;
+    const float centre = (safe.left + safe.right) * 0.5F;
+    switch (control.placement) {
+    case Placement::top_right:
+    case Placement::shoulder_right_2:
+      bounds = rect_at(safe.right - edge - small, safe.top + edge, small);
+      break;
+    case Placement::top_left:
+    case Placement::shoulder_left_2:
+      bounds = rect_at(safe.left + edge, safe.top + edge, small);
+      break;
+    case Placement::shoulder_right:
+      bounds = rect_at(safe.right - edge - small, safe.top + edge + unit * kShoulderStep, small);
+      break;
+    case Placement::shoulder_left:
+      bounds = rect_at(safe.left + edge, safe.top + edge + unit * kShoulderStep, small);
+      break;
+    case Placement::top_centre:
+      bounds = rect_at(centre - small * 0.5F, safe.top + edge, small);
+      break;
+    case Placement::menu_left:
+      bounds = rect_at(centre - unit * kMenuGap * 0.5F - small, safe.bottom - edge - small, small);
+      break;
+    case Placement::menu_right:
+      bounds = rect_at(centre + unit * kMenuGap * 0.5F, safe.bottom - edge - small, small);
+      break;
+    default: {
+      const ActionSlot slot = action_slot(
+          is_action(control.placement) ? control.placement : Placement::action_tertiary);
       bounds = rect_at(buttons_left + slot.column * unit, buttons_top + slot.row * unit, unit);
+      break;
+    }
     }
     layout.zones.push_back(Zone{control.id, bounds, control.actions});
     layout.visuals.push_back(

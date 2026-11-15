@@ -20,7 +20,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -38,17 +41,13 @@ constexpr float kDiscRadiusFraction = 0.46F;
 constexpr float kHeldDiscRadiusFraction = 0.49F;
 constexpr float kRingWidthFraction = 0.06F;
 constexpr int kCircleSegments = 40;
+constexpr float kIdleIconAlpha = 235.0F / 255.0F;
 
-std::uint8_t scale_alpha(float alpha) {
-  return static_cast<std::uint8_t>(std::lround(std::clamp(alpha, 0.0F, 1.0F) * 255.0F));
-}
-
-// One rasterised glyph, with the renderer and size it was made for. SDL owns a
-// texture until its renderer goes away, so a glyph made for another renderer is
-// replaced rather than destroyed here.
+// One rasterised glyph: the painter's image, the painter it belongs to and the
+// size it was rasterised at.
 struct Glyph {
-  SDL_Texture *texture = nullptr;
-  SDL_Renderer *renderer = nullptr;
+  std::uintptr_t image = 0;
+  Painter *painter = nullptr;
   int pixels = 0;
 };
 
@@ -63,59 +62,51 @@ struct PointerState {
   bool active = false;
 };
 
-void fill_circle(SDL_Renderer *renderer, SDL_FPoint centre, float radius, SDL_Color color) {
+Vertex vertex_at(Point position, SDL_Color color) {
+  return Vertex{position,
+                static_cast<float>(color.r) / 255.0F,
+                static_cast<float>(color.g) / 255.0F,
+                static_cast<float>(color.b) / 255.0F,
+                static_cast<float>(color.a) / 255.0F,
+                Point{}};
+}
+
+void fill_circle(Painter &painter, Point centre, float radius, SDL_Color color) {
   if (radius <= 0.0F) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-  std::array<SDL_Vertex, static_cast<std::size_t>(kCircleSegments) + 2U> vertices{};
+  std::array<Vertex, static_cast<std::size_t>(kCircleSegments) + 1U> vertices{};
   std::array<int, static_cast<std::size_t>(kCircleSegments) * 3U> indices{};
-  const SDL_FColor vertex_color{
-      static_cast<float>(color.r) / 255.0F, static_cast<float>(color.g) / 255.0F,
-      static_cast<float>(color.b) / 255.0F, static_cast<float>(color.a) / 255.0F};
-  vertices[0].position = centre;
-  vertices[0].color = vertex_color;
-  vertices[0].tex_coord = SDL_FPoint{0.0F, 0.0F};
+  vertices[0] = vertex_at(centre, color);
   const float step = 2.0F * SDL_PI_F / static_cast<float>(kCircleSegments);
   for (int index = 0; index < kCircleSegments; ++index) {
     const float angle = static_cast<float>(index) * step;
-    vertices[static_cast<std::size_t>(index) + 1].position =
-        SDL_FPoint{centre.x + std::cos(angle) * radius, centre.y + std::sin(angle) * radius};
-    vertices[static_cast<std::size_t>(index) + 1].color = vertex_color;
-    vertices[static_cast<std::size_t>(index) + 1].tex_coord = SDL_FPoint{0.0F, 0.0F};
+    vertices[static_cast<std::size_t>(index) + 1U] = vertex_at(
+        Point{centre.x + std::cos(angle) * radius, centre.y + std::sin(angle) * radius}, color);
     const int next = (index + 1) % kCircleSegments;
     indices[static_cast<std::size_t>(index) * 3U + 0U] = 0;
     indices[static_cast<std::size_t>(index) * 3U + 1U] = index + 1;
     indices[static_cast<std::size_t>(index) * 3U + 2U] = next + 1;
   }
-  vertices[kCircleSegments + 1] = vertices[1];
-  SDL_RenderGeometry(renderer, nullptr, vertices.data(), kCircleSegments + 2, indices.data(),
-                     kCircleSegments * 3);
+  painter.draw(0, vertices, indices);
 }
 
-void stroke_circle(SDL_Renderer *renderer, SDL_FPoint centre, float radius, float width,
-                   SDL_Color color) {
+void stroke_circle(Painter &painter, Point centre, float radius, float width, SDL_Color color) {
   if (radius <= 0.0F || width <= 0.0F) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
   const float inner = std::max(0.5F, radius - width);
-  std::array<SDL_Vertex, static_cast<std::size_t>(kCircleSegments) * 2U> vertices{};
+  std::array<Vertex, static_cast<std::size_t>(kCircleSegments) * 2U> vertices{};
   std::array<int, static_cast<std::size_t>(kCircleSegments) * 6U> indices{};
-  const SDL_FColor vertex_color{
-      static_cast<float>(color.r) / 255.0F, static_cast<float>(color.g) / 255.0F,
-      static_cast<float>(color.b) / 255.0F, static_cast<float>(color.a) / 255.0F};
   const float step = 2.0F * SDL_PI_F / static_cast<float>(kCircleSegments);
   for (int index = 0; index < kCircleSegments; ++index) {
     const float angle = static_cast<float>(index) * step;
     const float cosine = std::cos(angle);
     const float sine = std::sin(angle);
-    vertices[static_cast<std::size_t>(index) * 2U + 0U].position =
-        SDL_FPoint{centre.x + cosine * inner, centre.y + sine * inner};
-    vertices[static_cast<std::size_t>(index) * 2U + 0U].color = vertex_color;
-    vertices[static_cast<std::size_t>(index) * 2U + 1U].position =
-        SDL_FPoint{centre.x + cosine * radius, centre.y + sine * radius};
-    vertices[static_cast<std::size_t>(index) * 2U + 1U].color = vertex_color;
+    vertices[static_cast<std::size_t>(index) * 2U + 0U] =
+        vertex_at(Point{centre.x + cosine * inner, centre.y + sine * inner}, color);
+    vertices[static_cast<std::size_t>(index) * 2U + 1U] =
+        vertex_at(Point{centre.x + cosine * radius, centre.y + sine * radius}, color);
     const int next = (index + 1) % kCircleSegments;
     indices[static_cast<std::size_t>(index) * 6U + 0U] = index * 2 + 0;
     indices[static_cast<std::size_t>(index) * 6U + 1U] = index * 2 + 1;
@@ -124,9 +115,62 @@ void stroke_circle(SDL_Renderer *renderer, SDL_FPoint centre, float radius, floa
     indices[static_cast<std::size_t>(index) * 6U + 4U] = next * 2 + 1;
     indices[static_cast<std::size_t>(index) * 6U + 5U] = next * 2 + 0;
   }
-  SDL_RenderGeometry(renderer, nullptr, vertices.data(), kCircleSegments * 2, indices.data(),
-                     kCircleSegments * 6);
+  painter.draw(0, vertices, indices);
 }
+
+void draw_image(Painter &painter, std::uintptr_t image, Rect bounds, float alpha) {
+  const std::array<Vertex, 4> vertices{
+      Vertex{Point{bounds.left, bounds.top}, 1.0F, 1.0F, 1.0F, alpha, Point{0.0F, 0.0F}},
+      Vertex{Point{bounds.right, bounds.top}, 1.0F, 1.0F, 1.0F, alpha, Point{1.0F, 0.0F}},
+      Vertex{Point{bounds.right, bounds.bottom}, 1.0F, 1.0F, 1.0F, alpha, Point{1.0F, 1.0F}},
+      Vertex{Point{bounds.left, bounds.bottom}, 1.0F, 1.0F, 1.0F, alpha, Point{0.0F, 1.0F}}};
+  const std::array<int, 6> indices{0, 1, 2, 0, 2, 3};
+  painter.draw(image, vertices, indices);
+}
+
+// An SDL_Renderer as a painter: images are textures of that renderer.
+class RendererPainter final : public Painter {
+public:
+  explicit RendererPainter(SDL_Renderer *renderer) : renderer_(renderer) {
+  }
+
+  std::uintptr_t upload(std::span<const std::uint8_t> rgba, int side) override {
+    SDL_Texture *texture =
+        SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, side, side);
+    if (texture == nullptr) {
+      return 0;
+    }
+    SDL_UpdateTexture(texture, nullptr, rgba.data(), side * 4);
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    textures_.push_back(texture);
+    return textures_.size();
+  }
+
+  void release(std::uintptr_t image) override {
+    SDL_DestroyTexture(textures_[image - 1U]);
+    textures_[image - 1U] = nullptr;
+  }
+
+  void draw(std::uintptr_t image, std::span<const Vertex> vertices,
+            std::span<const int> indices) override {
+    converted_.resize(vertices.size());
+    for (std::size_t index = 0; index < vertices.size(); ++index) {
+      const Vertex &from = vertices[index];
+      converted_[index] = SDL_Vertex{SDL_FPoint{from.position.x, from.position.y},
+                                     SDL_FColor{from.red, from.green, from.blue, from.alpha},
+                                     SDL_FPoint{from.uv.x, from.uv.y}};
+    }
+    SDL_RenderGeometry(renderer_, image == 0 ? nullptr : textures_[image - 1U], converted_.data(),
+                       static_cast<int>(converted_.size()), indices.data(),
+                       static_cast<int>(indices.size()));
+  }
+
+private:
+  SDL_Renderer *renderer_;
+  // Handle n is textures_[n - 1].
+  std::vector<SDL_Texture *> textures_;
+  std::vector<SDL_Vertex> converted_;
+};
 
 } // namespace
 
@@ -140,6 +184,7 @@ struct Controls::Impl {
   std::unordered_map<std::uint32_t, int> action_references;
   std::unordered_map<std::int64_t, Captured> captured;
   std::unordered_map<std::string, Glyph> glyphs;
+  std::unordered_map<SDL_Renderer *, std::unique_ptr<RendererPainter>> renderer_painters;
   PointerState pointer_state;
   std::uint32_t unavailable = 0;
   bool enabled = true;
@@ -257,30 +302,30 @@ struct Controls::Impl {
     }
   }
 
-  SDL_Texture *glyph_texture(SDL_Renderer *renderer, const std::string &name, int pixels) {
+  std::uintptr_t glyph_image(Painter &painter, const std::string &name, int pixels) {
     if (name.empty() || pixels <= 0) {
-      return nullptr;
+      return 0;
     }
     Glyph &glyph = glyphs[name];
-    if (glyph.texture != nullptr && glyph.pixels == pixels && glyph.renderer == renderer) {
-      return glyph.texture;
+    if (glyph.image != 0 && glyph.pixels == pixels && glyph.painter == &painter) {
+      return glyph.image;
     }
-    if (glyph.texture != nullptr && glyph.renderer == renderer) {
-      SDL_DestroyTexture(glyph.texture);
+    if (glyph.image != 0 && glyph.painter == &painter) {
+      painter.release(glyph.image);
     }
-    glyph.texture = nullptr;
+    glyph.image = 0;
     const embedded_icons::Icon *icon = embedded_icons::find(name);
     if (icon == nullptr) {
-      return nullptr;
+      return 0;
     }
     SDL_IOStream *stream = SDL_IOFromConstMem(icon->bytes, icon->size);
     if (stream == nullptr) {
-      return nullptr;
+      return 0;
     }
     SDL_Surface *loaded = IMG_LoadSizedSVG_IO(stream, pixels, pixels);
     SDL_CloseIO(stream);
     if (loaded == nullptr) {
-      return nullptr;
+      return 0;
     }
     SDL_Surface *converted = loaded->format == SDL_PIXELFORMAT_RGBA32
                                  ? loaded
@@ -289,13 +334,21 @@ struct Controls::Impl {
       SDL_DestroySurface(loaded);
     }
     if (converted == nullptr) {
-      return nullptr;
+      return 0;
     }
-    glyph.texture = SDL_CreateTextureFromSurface(renderer, converted);
-    glyph.renderer = renderer;
-    glyph.pixels = pixels;
+    std::vector<std::uint8_t> rgba(static_cast<std::size_t>(pixels) *
+                                   static_cast<std::size_t>(pixels) * 4U);
+    for (int row = 0; row < pixels; ++row) {
+      const auto *source = static_cast<const std::uint8_t *>(converted->pixels) +
+                           static_cast<std::ptrdiff_t>(row) * converted->pitch;
+      std::copy_n(source, static_cast<std::size_t>(pixels) * 4U,
+                  rgba.begin() + static_cast<std::ptrdiff_t>(row) * pixels * 4);
+    }
     SDL_DestroySurface(converted);
-    return glyph.texture;
+    glyph.image = painter.upload(rgba, pixels);
+    glyph.painter = &painter;
+    glyph.pixels = pixels;
+    return glyph.image;
   }
 
   [[nodiscard]] bool pressed(std::uint32_t id) const {
@@ -425,47 +478,59 @@ void Controls::cancel() {
 }
 
 void Controls::present(SDL_Renderer *renderer) {
-  if (renderer == nullptr || !visible()) {
+  if (renderer == nullptr) {
     return;
   }
   SDL_BlendMode previous_blend = SDL_BLENDMODE_NONE;
   SDL_GetRenderDrawBlendMode(renderer, &previous_blend);
   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+  // The glyphs belong to this renderer for as long as it lives; one painter per renderer keeps
+  // them.
+  auto &painter = impl_->renderer_painters[renderer];
+  if (!painter) {
+    painter = std::make_unique<RendererPainter>(renderer);
+  }
+  present(*painter);
+  SDL_SetRenderDrawBlendMode(renderer, previous_blend);
+}
+
+void Controls::present(Painter &painter) {
+  if (!visible()) {
+    return;
+  }
   for (const Visual &visual : impl_->layout.visuals) {
     if ((visual.actions & impl_->unavailable) != 0U) {
       continue;
     }
     const bool held = impl_->pressed(visual.id);
-    const SDL_FRect bounds{visual.bounds.left, visual.bounds.top, visual.bounds.width(),
-                           visual.bounds.height()};
-    const SDL_FPoint centre{bounds.x + bounds.w * 0.5F, bounds.y + bounds.h * 0.5F};
-    const float radius =
-        std::min(bounds.w, bounds.h) * (held ? kHeldDiscRadiusFraction : kDiscRadiusFraction);
+    const Rect &bounds = visual.bounds;
+    const Point centre{bounds.left + bounds.width() * 0.5F, bounds.top + bounds.height() * 0.5F};
+    const float radius = std::min(bounds.width(), bounds.height()) *
+                         (held ? kHeldDiscRadiusFraction : kDiscRadiusFraction);
     if (visual.disc) {
       /* Held: the accent fill the rest of the port's UI uses, at ring brightness.
        * Idle: a translucent slate so the game stays readable through it. */
-      fill_circle(renderer, centre, radius,
+      fill_circle(painter, centre, radius,
                   held ? SDL_Color{53, 81, 106, 240} : SDL_Color{20, 27, 38, 153});
     }
     /* The ring is drawn for every control, including the ones whose art carries
      * its own button: a direction glyph's circle sits just inside it, so a held
      * direction lights a gold halo instead of only brightening its arrow. */
-    stroke_circle(renderer, centre, radius,
+    stroke_circle(painter, centre, radius,
                   std::max(1.5F, radius * (held ? kRingWidthFraction * 1.5F : kRingWidthFraction)),
                   held ? SDL_Color{255, 214, 90, 255} : SDL_Color{242, 247, 250, 178});
     const int pixels =
-        std::max(8, static_cast<int>(bounds.w * (held ? kHeldIconFraction : kIconFraction)));
-    SDL_Texture *texture = impl_->glyph_texture(renderer, visual.icon, pixels);
-    if (texture == nullptr) {
+        std::max(8, static_cast<int>(bounds.width() * (held ? kHeldIconFraction : kIconFraction)));
+    const std::uintptr_t image = impl_->glyph_image(painter, visual.icon, pixels);
+    if (image == 0) {
       continue;
     }
     const float side = static_cast<float>(pixels);
-    const SDL_FRect destination{bounds.x + (bounds.w - side) * 0.5F,
-                                bounds.y + (bounds.h - side) * 0.5F, side, side};
-    SDL_SetTextureAlphaMod(texture, held ? 255 : 235);
-    SDL_RenderTexture(renderer, texture, nullptr, &destination);
+    const float left = bounds.left + (bounds.width() - side) * 0.5F;
+    const float top = bounds.top + (bounds.height() - side) * 0.5F;
+    draw_image(painter, image, Rect{left, top, left + side, top + side},
+               held ? 1.0F : kIdleIconAlpha);
   }
-  SDL_SetRenderDrawBlendMode(renderer, previous_blend);
 }
 
 } // namespace touch_ui
